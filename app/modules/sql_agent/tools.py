@@ -1,0 +1,48 @@
+from typing import List, Any
+from sqlalchemy import create_engine, inspect, text
+from app.core.config import Config
+
+# Initialize the engine globally using the Config path
+engine = create_engine(Config.DB_URI)
+
+def list_tables() -> List[str]:
+    """
+    Returns a list of all table names in the database.
+    Used by the Agent to understand the Schema.
+    """
+    inspector = inspect(engine)
+    return inspector.get_table_names()
+
+def get_schema(table_names: List[str]) -> str:
+    """
+    Returns the DDL (CREATE TABLE statements) for the specified tables.
+    Crucial for the LLM to understand column names and types.
+    """
+    inspector = inspect(engine)
+    schema_text = ""
+    
+    for table in table_names:
+        # Get columns
+        columns = inspector.get_columns(table)
+        schema_text += f"Table: {table}\n"
+        for col in columns:
+            schema_text += f" - {col['name']} ({col['type']})\n"
+        schema_text += "\n"
+        
+    return schema_text
+
+def run_query(query: str) -> str:
+    """
+    Executes a SQL query and returns the results as a string.
+    Catches errors and returns the error message instead of crashing.
+    """
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text(query))
+            # Fetch all rows and convert to list of dictionaries
+            keys = result.keys()
+            rows = [dict(zip(keys, row)) for row in result.fetchall()]
+            return str(rows)
+    except Exception as e:
+        # Return the specific error message to the LLM so it can fix it
+        return f"Error: {str(e)}"
