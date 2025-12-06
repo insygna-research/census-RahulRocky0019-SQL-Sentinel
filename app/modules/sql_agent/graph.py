@@ -38,15 +38,48 @@ def generate_sql(state: AgentState):
     tables = list_tables()
     schema_text = get_schema(tables)
     
-    system_msg = """You are an expert SQL Data Analyst. 
-    Given the schema below, write a SQLite query to answer the user's question.
+    # system_msg = """You are an expert SQL Data Analyst. 
+    # Given the schema below, write a SQLite query to answer the user's question.
     
-    Schema:
+    # Schema:
+    # {schema}
+    
+    # Rules:
+    # 1. STRICTLY use the provided column names.
+    # 2. Do not use Markdown formatting (```sql). Just the raw query in the JSON.
+    # """
+
+    # --- ARCHITECT-LEVEL PROMPT (DATABASE AGNOSTIC) ---
+    system_msg = """You are a Principal SQL Architect. Your goal is to answer user questions by writing efficient, error-free SQLite queries for ANY provided schema.
+
+    ### DATABASE SCHEMA
     {schema}
+
+    ### CRITICAL RULES
+    1. **Schema Reliance**: 
+       - Strictly use ONLY the tables and columns listed in the schema above. 
+       - Do not assume column names (e.g., don't use 'user_id' unless you see it in the schema).
+       - Infer relationships based on Foreign Keys or matching ID columns (e.g., 'ArtistId' in 'Albums' links to 'Artists').
+
+    2. **The "Total Count" Protocol (MANDATORY)**:
+       - When the user asks for a LIST of records (e.g., "Show tracks"), you MUST limit rows for safety BUT you must also calculate the total count.
+       - **Technique**: Use `COUNT(*) OVER() AS _Total_Rows` in your SELECT statement.
+       - **Example**: 
+         `SELECT Name, AlbumId, COUNT(*) OVER() AS _Total_Rows FROM Tracks LIMIT 20`
+       - This allows the user to see "Page 1 of X" without fetching all X rows.
+
+    3. **Aggregations**: 
+       - If the user asks for a simple count (e.g. "How many tracks?"), just use `SELECT COUNT(*)`. Do not add the window function.
     
-    Rules:
-    1. STRICTLY use the provided column names.
-    2. Do not use Markdown formatting (```sql). Just the raw query in the JSON.
+    4. **String Matching (SQLite Specific)**: 
+       - SQLite is case-sensitive. When searching for text, assume the user might use wrong casing.
+       - Use `UPPER(Column) = 'VALUE'` or `Column LIKE '%Value%'` for robustness.
+    
+    5. **No DML Operations**: 
+       - You are Read-Only. Never generate INSERT, UPDATE, DELETE, or DROP.
+
+    ### FAILURE RECOVERY
+    If a previous query failed, analyze the error provided below.
     """
     
     # Dynamic prompt that changes if an error exists (Self-Correction)
@@ -94,11 +127,24 @@ def synthesize_answer(state: AgentState):
     Step 4: Turn the raw list of dicts into a human answer.
     """
     prompt = ChatPromptTemplate.from_template(
-        """User Question: {question}
-        SQL Query Used: {query}
-        SQL Result: {result}
+        """You are a Data Reporter. Your job is to present the SQL results to the user clearly.
+
+        User Question: {question}
+        SQL Query: {query}
+        Raw Data: {result}
         
-        Write a concise, professional answer based strictly on the result."""
+        ### RESPONSE RULES:
+        1. **If the Raw Data is an Error**: Explain what went wrong in plain English.
+        
+        2. **If the Raw Data is a List**:
+           - check for the key `_Total_Rows` inside the data.
+           - **Headline**: State "Found [X] records" (using _Total_Rows if present, otherwise count the rows).
+           - **Table**: Output the data as a Markdown Table.
+           - **Cleanup**: Do NOT include `_Total_Rows` as a column in the table.
+        
+        3. **If the Raw Data is a Single Number**:
+           - Answer directly (e.g., "The total sales were $500.").
+        """
     )
     chain = prompt | llm
     response = chain.invoke({

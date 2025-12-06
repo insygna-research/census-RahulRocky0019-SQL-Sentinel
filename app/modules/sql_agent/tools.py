@@ -31,18 +31,49 @@ def get_schema(table_names: List[str]) -> str:
         
     return schema_text
 
+# def run_query(query: str) -> str:
+#     """
+#     Executes a SQL query and returns the results as a string.
+#     Catches errors and returns the error message instead of crashing.
+#     """
+#     try:
+#         with engine.connect() as connection:
+#             result = connection.execute(text(query))
+#             # Fetch all rows and convert to list of dictionaries
+#             keys = result.keys()
+#             rows = [dict(zip(keys, row)) for row in result.fetchall()]
+#             return str(rows)
+#     except Exception as e:
+#         # Return the specific error message to the LLM so it can fix it
+#         return f"Error: {str(e)}"
+    
 def run_query(query: str) -> str:
     """
     Executes a SQL query and returns the results as a string.
-    Catches errors and returns the error message instead of crashing.
+    
+    SAFETY PROTOCOLS:
+    1. Catches errors and returns the error message instead of crashing.
+    2. Enforces a hard context safety limit to prevent Token Overflow.
     """
     try:
         with engine.connect() as connection:
             result = connection.execute(text(query))
-            # Fetch all rows and convert to list of dictionaries
             keys = result.keys()
-            rows = [dict(zip(keys, row)) for row in result.fetchall()]
-            return str(rows)
+            all_rows = [dict(zip(keys, row)) for row in result.fetchall()]
+            
+            # Global Hard Cap (Safety Valve)
+            GLOBAL_CAP = 50 
+            if len(all_rows) > GLOBAL_CAP:
+                preview = all_rows[:GLOBAL_CAP]
+                return (
+                    f"SYSTEM NOTE: Result truncated. Found {len(all_rows)} rows. "
+                    f"Showing first {GLOBAL_CAP}.\nData: {str(preview)}"
+                )
+            
+            if not all_rows:
+                return "Result: Empty."
+                
+            return str(all_rows)
+            
     except Exception as e:
-        # Return the specific error message to the LLM so it can fix it
         return f"Error: {str(e)}"
