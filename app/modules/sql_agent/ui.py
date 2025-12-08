@@ -1,5 +1,6 @@
 import sys
 import os
+from langchain_core.messages import HumanMessage, AIMessage
 
 # --- PATH FIX: Add project root to sys.path ---
 # This ensures Python can find the 'app' module no matter where you run the command from.
@@ -51,8 +52,25 @@ if prompt := st.chat_input("Ex: Show me the top 5 selling artists"):
         message_placeholder.markdown("Thinking... 🧠")
         
         try:
+            # Convert Streamlit history to LangChain history
+            history = []
+
+            # print("==========\n" + str(st.session_state.messages))
+
+            for msg in st.session_state.messages:
+                if msg["role"] == "user":
+                    history.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    history.append(AIMessage(content=msg["content"]))
+            
+            # print("\n" + str(history) + "\n==========")
+
             # Run the LangGraph
-            initial_state = {"question": prompt, "iterations": 0}
+            initial_state = {
+                "question": prompt, 
+                "iterations": 0, 
+                "chat_history": history
+            }
             result = app.invoke(initial_state)
             
             # --- Extract Final Answer ---

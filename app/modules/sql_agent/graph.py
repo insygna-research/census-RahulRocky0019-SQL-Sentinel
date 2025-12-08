@@ -1,6 +1,6 @@
 from typing import Literal
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 
@@ -58,13 +58,24 @@ def general_chat(state: AgentState):
     """
     New Node: Handles non-SQL conversation.
     """
+    history_msgs = state["chat_history"][-6:]  # Last 6 messages
     msg = state["question"]
+
     # Simple direct response
-    prompt = ChatPromptTemplate.from_template(
-        "You are a helpful SQL Assistant. The user said: '{question}'. Reply politely and offer to help with the database."
-    )
+    # prompt = ChatPromptTemplate.from_template(
+    #     "You are a helpful SQL Assistant. The user said: '{question}'. Reply politely and offer to help with the database."
+    # )
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful Data Assistant named 'SQL Sentinel'. You help users query their SQLite databases. Be concise, professional, and friendly. If the user asks a question about data, politely suggest they ask 'Show me...' or 'List...' so you can query the database."),
+        MessagesPlaceholder(variable_name="history"), # <--- Auto-expands the list of messages
+        ("user", "{question}")
+    ])
+
     chain = prompt | llm
-    response = chain.invoke({"question": msg})
+    response = chain.invoke({
+        "history": history_msgs,
+        "question": msg
+    })
     
     # We map the response to 'query_result' so the UI displays it easily
     return {"query_result": response.content}
@@ -77,6 +88,7 @@ def generate_sql(state: AgentState):
     """
     tables = list_tables()
     schema_text = get_schema(tables)
+    history_text = "\n".join([f"{msg.type.upper()}: {msg.content}" for msg in state["chat_history"][-6:]]) # Keep last 6 turns
     
     # system_msg = """You are an expert SQL Data Analyst. 
     # Given the schema below, write a SQLite query to answer the user's question.
@@ -123,7 +135,15 @@ def generate_sql(state: AgentState):
     """
     
     # Dynamic prompt that changes if an error exists (Self-Correction)
-    user_msg = f"Question: {state['question']}"
+    # user_msg = f"Question: {state['question']}"
+    user_msg = f"""
+    ### CHAT HISTORY
+    {history_text}
+    
+    ### CURRENT QUESTION
+    {state['question']}
+    """
+
     if state.get("error"):
         user_msg += f"\n\nPREVIOUS ERROR: {state['error']}\nFix the query based on this error."
 
