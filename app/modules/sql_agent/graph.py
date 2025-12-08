@@ -21,14 +21,54 @@ class SQLOutput(BaseModel):
     explanation: str = Field(description="Brief explanation of the logic.")
     query: str = Field(description="The valid SQLite query.")
 
+class RouteDecision(BaseModel):
+    intent: Literal["general", "sql"] = Field(
+        description="Select 'sql' if the user asks about data/database. Select 'general' if it is a greeting or small talk."
+    )
+
 # --- 2. Nodes ---
 
 def parse_question(state: AgentState):
     """
-    Step 1: Understand the context. 
-    For MVP, we just load the full schema (Chinook is small).
+    Step 1 (The Router): Classify the user's intent.
+    Does NOT write SQL. Just decides WHERE to go next.
     """
-    return {"iterations": 0, "error": None}
+    system_msg = """You are an Intent Classifier. 
+    Analyze the user's input and decide:
+    1. 'sql': If the user is asking for data, lists, counts, or information that lives in a database.
+    2. 'general': If the user is just saying hello, thank you, or asking general questions (e.g. "How are you?").
+    """
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_msg),
+        ("user", "{question}")
+    ])
+    
+    # Force strict classification
+    classifier = llm.with_structured_output(RouteDecision)
+    chain = prompt | classifier
+    
+    decision = chain.invoke({"question": state["question"]})
+    
+    # Return the intent to the state
+    return {"intent": decision.intent, "iterations": 0, "error": None}
+
+
+def general_chat(state: AgentState):
+    """
+    New Node: Handles non-SQL conversation.
+    """
+    msg = state["question"]
+    # Simple direct response
+    prompt = ChatPromptTemplate.from_template(
+        "You are a helpful SQL Assistant. The user said: '{question}'. Reply politely and offer to help with the database."
+    )
+    chain = prompt | llm
+    response = chain.invoke({"question": msg})
+    
+    # We map the response to 'query_result' so the UI displays it easily
+    return {"query_result": response.content}
+
 
 def generate_sql(state: AgentState):
     """
@@ -103,6 +143,7 @@ def generate_sql(state: AgentState):
         # If the LLM output breaks structure (rare), fallback
         return {"error": f"LLM Generation Error: {str(e)}"}
 
+
 def execute_sql(state: AgentState):
     """
     Step 3: The Sentinel Check + Execution.
@@ -121,6 +162,7 @@ def execute_sql(state: AgentState):
         return {"error": result}
     
     return {"query_result": result, "error": None}
+
 
 def synthesize_answer(state: AgentState):
     """
@@ -156,13 +198,22 @@ def synthesize_answer(state: AgentState):
 
 # --- 3. Edge Logic (The Router) ---
 
-def should_continue(state: AgentState) -> Literal["generate_sql", "synthesize_answer", END]:
+def route_decision(state: AgentState) -> Literal["general_chat", "generate_sql"]:
+    """
+    Decides where to go after 'parse_question'.
+    """
+    if state["intent"] == "general":
+        return "general_chat"
+    return "generate_sql"
+
+
+def should_continue(state: AgentState) -> Literal["generate_sql", "synthesize_answer", "END"]:
     """
     Decides if we loop back or finish.
     """
     # Safety Valve: Don't loop forever
     if state["iterations"] > 3:
-        return END
+        return "END"
         
     if state.get("error"):
         return "generate_sql"  # Loop back to fix the error
@@ -175,26 +226,36 @@ workflow = StateGraph(AgentState)
 
 # Add Nodes
 workflow.add_node("parse_question", parse_question)
+workflow.add_node("general_chat", general_chat)
 workflow.add_node("generate_sql", generate_sql)
 workflow.add_node("execute_sql", execute_sql)
 workflow.add_node("synthesize_answer", synthesize_answer)
 
-# Add Edges
+# Add Edges and Conditionals Edges
 workflow.add_edge(START, "parse_question")
-workflow.add_edge("parse_question", "generate_sql")
+
+workflow.add_conditional_edges(
+    "parse_question",
+    route_decision,
+    {
+        "general_chat": "general_chat",
+        "generate_sql": "generate_sql"
+    }
+)
+
 workflow.add_edge("generate_sql", "execute_sql")
 
-# Conditional Edge (The Loop)
 workflow.add_conditional_edges(
     "execute_sql",
     should_continue,
     {
         "generate_sql": "generate_sql",
         "synthesize_answer": "synthesize_answer",
-        END: END
+        "END": END
     }
 )
 
+workflow.add_edge("general_chat", END)
 workflow.add_edge("synthesize_answer", END)
 
 # Compile
