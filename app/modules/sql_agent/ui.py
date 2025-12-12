@@ -2,7 +2,7 @@ import sys
 import os
 from langchain_core.messages import HumanMessage, AIMessage
 
-# --- PATH FIX: Add project root to sys.path ---
+# -----------------------------------------------
 # This ensures Python can find the 'app' module no matter where you run the command from.
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 # -----------------------------------------------
@@ -83,6 +83,10 @@ if prompt := st.chat_input("Ex: Show me the top 5 selling artists"):
             # --- Update Sidebar (The "Senior" Demo Feature) ---
             with debug_container.container():
                 st.write("**Iterations:**", result["iterations"])
+
+                if result.get("explanation"):
+                    st.markdown("**🧠 Reasoning:**")
+                    st.info(result["explanation"])
                 
                 st.write("**Final SQL Generated:**")
                 st.code(result.get("sql_query", "None"), language="sql")

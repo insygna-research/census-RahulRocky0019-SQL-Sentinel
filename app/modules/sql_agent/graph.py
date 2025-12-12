@@ -10,6 +10,7 @@ from app.modules.sql_agent.tools import list_tables, get_schema, run_query
 from app.modules.sql_agent.sentinel import is_safe_sql
 
 # --- 1. Setup LLM & Structured Output ---
+
 llm = ChatGroq(
     api_key=Config.GROQ_API_KEY, 
     model=Config.MODEL_1, 
@@ -44,13 +45,11 @@ def parse_question(state: AgentState):
         ("user", "{question}")
     ])
     
-    # Force strict classification
     classifier = llm.with_structured_output(RouteDecision)
     chain = prompt | classifier
     
     decision = chain.invoke({"question": state["question"]})
     
-    # Return the intent to the state
     return {"intent": decision.intent, "iterations": 0, "error": None}
 
 
@@ -58,13 +57,9 @@ def general_chat(state: AgentState):
     """
     New Node: Handles non-SQL conversation.
     """
-    history_msgs = state["chat_history"][-6:]  # Last 6 messages
+    history_msgs = state["chat_history"][-10:]  # Last 10 messages
     msg = state["question"]
 
-    # Simple direct response
-    # prompt = ChatPromptTemplate.from_template(
-    #     "You are a helpful SQL Assistant. The user said: '{question}'. Reply politely and offer to help with the database."
-    # )
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a helpful Data Assistant named 'SQL Sentinel'. You help users query their SQLite databases. Be concise, professional, and friendly. If the user asks a question about data, politely suggest they ask 'Show me...' or 'List...' so you can query the database."),
         MessagesPlaceholder(variable_name="history"), # <--- Auto-expands the list of messages
@@ -77,7 +72,6 @@ def general_chat(state: AgentState):
         "question": msg
     })
     
-    # We map the response to 'query_result' so the UI displays it easily
     return {"query_result": response.content}
 
 
@@ -88,18 +82,7 @@ def generate_sql(state: AgentState):
     """
     tables = list_tables()
     schema_text = get_schema(tables)
-    history_text = "\n".join([f"{msg.type.upper()}: {msg.content}" for msg in state["chat_history"][-6:]]) # Keep last 6 turns
-    
-    # system_msg = """You are an expert SQL Data Analyst. 
-    # Given the schema below, write a SQLite query to answer the user's question.
-    
-    # Schema:
-    # {schema}
-    
-    # Rules:
-    # 1. STRICTLY use the provided column names.
-    # 2. Do not use Markdown formatting (```sql). Just the raw query in the JSON.
-    # """
+    history_text = "\n".join([f"{msg.type.upper()}: {msg.content}" for msg in state["chat_history"][-10:]]) # Keep last 10 turns
 
     # --- ARCHITECT-LEVEL PROMPT (DATABASE AGNOSTIC) ---
     system_msg = """You are a Principal SQL Architect. Your goal is to answer user questions by writing efficient, error-free SQLite queries for ANY provided schema.
@@ -128,14 +111,15 @@ def generate_sql(state: AgentState):
        - Use `UPPER(Column) = 'VALUE'` or `Column LIKE '%Value%'` for robustness.
     
     5. **No DML Operations**: 
-       - You are Read-Only. Never generate INSERT, UPDATE, DELETE, or DROP.
+       - You are **READ-ONLY**. 
+       - If the user asks for a DML operation (INSERT, UPDATE, DELETE, DROP, ALTER), you **MUST NOT** generate a SELECT query to "be helpful".
+       - Instead, you **MUST** output exactly this query: `SELECT 'DML_ERROR' AS Error_Message`
+       - This triggers a special security handler in the system.
 
     ### FAILURE RECOVERY
     If a previous query failed, analyze the error provided below.
     """
     
-    # Dynamic prompt that changes if an error exists (Self-Correction)
-    # user_msg = f"Question: {state['question']}"
     user_msg = f"""
     ### CHAT HISTORY
     {history_text}
@@ -152,13 +136,16 @@ def generate_sql(state: AgentState):
         ("user", user_msg)
     ])
     
-    # We use 'with_structured_output' to enforce strict JSON
     structured_llm = llm.with_structured_output(SQLOutput)
     chain = prompt | structured_llm
     
     try:
         response = chain.invoke({"schema": schema_text})
-        return {"sql_query": response.query, "iterations": state["iterations"] + 1}
+        return {
+            "sql_query": response.query,
+            "explanation": response.explanation,
+            "iterations": state["iterations"] + 1
+        }
     except Exception as e:
         # If the LLM output breaks structure (rare), fallback
         return {"error": f"LLM Generation Error: {str(e)}"}
@@ -169,11 +156,15 @@ def execute_sql(state: AgentState):
     Step 3: The Sentinel Check + Execution.
     """
     query = state["sql_query"]
-    
-    # Security Check
+
+    # Check for our "Trap Door" Query
+    if "DML_ERROR" in query:
+        return {"error": "Security Alert: You do not have permission to modify the database (INSERT/UPDATE/DELETE/DROP)."}
+
+    # Backup in case the LLM ignores the prompt
     if not is_safe_sql(query):
-        return {"error": "Security Alert: Dangerous SQL detected (DROP/DELETE/etc)."}
-    
+        return {"error": "Security Alert: Dangerous SQL detected (DROP/DELETE/etc).."}
+       
     # Execution
     result = run_query(query)
     
@@ -244,14 +235,12 @@ def should_continue(state: AgentState) -> Literal["generate_sql", "synthesize_an
 
 workflow = StateGraph(AgentState)
 
-# Add Nodes
 workflow.add_node("parse_question", parse_question)
 workflow.add_node("general_chat", general_chat)
 workflow.add_node("generate_sql", generate_sql)
 workflow.add_node("execute_sql", execute_sql)
 workflow.add_node("synthesize_answer", synthesize_answer)
 
-# Add Edges and Conditionals Edges
 workflow.add_edge(START, "parse_question")
 
 workflow.add_conditional_edges(

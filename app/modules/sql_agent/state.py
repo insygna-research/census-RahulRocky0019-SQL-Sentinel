@@ -10,6 +10,7 @@ class AgentState(TypedDict):
     intent: str
     chat_history: List[BaseMessage]
     sql_query: Optional[str]
+    explanation: Optional[str]
     query_result: Optional[str]
     error: Optional[str]
     iterations: int

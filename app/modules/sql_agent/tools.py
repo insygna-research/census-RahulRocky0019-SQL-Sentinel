@@ -30,22 +30,6 @@ def get_schema(table_names: List[str]) -> str:
         schema_text += "\n"
         
     return schema_text
-
-# def run_query(query: str) -> str:
-#     """
-#     Executes a SQL query and returns the results as a string.
-#     Catches errors and returns the error message instead of crashing.
-#     """
-#     try:
-#         with engine.connect() as connection:
-#             result = connection.execute(text(query))
-#             # Fetch all rows and convert to list of dictionaries
-#             keys = result.keys()
-#             rows = [dict(zip(keys, row)) for row in result.fetchall()]
-#             return str(rows)
-#     except Exception as e:
-#         # Return the specific error message to the LLM so it can fix it
-#         return f"Error: {str(e)}"
     
 def run_query(query: str) -> str:
     """
