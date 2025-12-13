@@ -4,4 +4,5 @@
 __pycache__/
 # Environment variables (secrets)
 .env
-# Example or local database file
+# requirements files
+requirements.in
