@@ -77,18 +77,22 @@ streamlit run app/modules/sql_agent/ui.py
 SQL-Sentinel/
 ├── app/
 │   ├── core/
-│   │   └── config.py       # Config & Secrets
+│   │   └── config.py         # Config & Secrets
 │   └── modules/
-│       └── sql_agent/      # THE BRAINS
-│           ├── graph.py    # StateGraph definition
-│           ├── sentinel.py # Security logic
-│           ├── state.py    # AgentState definition
-│           ├── tools.py    # DB interactions
-│           └── ui.py       # Streamlit Frontend
+│       └── sql_agent/        # THE BRAINS
+│           ├── graph.py      # StateGraph definition
+│           ├── sentinel.py   # Security logic
+│           ├── state.py      # AgentState definition
+│           ├── tools.py      # DB interactions
+│           └── ui.py         # Streamlit Frontend
 ├── data/
-│   └── chinook.db          # chinook.db
-├── .env                    # Store GROQ_API_KEY
+│   └── chinook.db            # chinook.db
+├── scripts/
+│   ├── generate_diagram.py   # Generate Architecture Diagram
+│   └── setup_data.py         # Download Database
+├── .env                      # Store GROQ_API_KEY
 ├── architecture_diagram.png
 ├── requirements.txt
+├── LICENSE
 └── README.md
 ```
